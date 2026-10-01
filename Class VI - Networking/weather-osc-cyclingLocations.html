@@ -1,0 +1,962 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather to OSC</title>
+<style>
+:root{
+  --paper:#eef1f4; --panel:#e2e8ee; --field:#f8fafb; --ink:#12202f; --ink-soft:#4a5b6c;
+  --isobar:#2456c6; --isobar-dark:#1a3f94; --frost:#c6d8e6; --front:#c8372d; --amber:#a86a12; --ok:#1f7a4d;
+  --line:#c5d0da;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{background:var(--paper)}
+body{margin:0;color:var(--ink);font:15px/1.5 var(--sans)}
+:focus-visible{outline:2px solid var(--isobar);outline-offset:2px}
+
+.top{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:flex-end;padding:28px 32px 22px}
+h1{font:600 2.1rem/1.1 var(--serif);margin:0;letter-spacing:-.01em}
+.lede{margin:6px 0 0;color:var(--ink-soft)}
+.status{display:flex;gap:10px;flex-wrap:wrap}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;background:var(--panel);font-size:.875rem}
+.pill i{width:9px;height:9px;border-radius:50%;background:#8a98a6}
+.pill b{font-weight:600}
+.pill[data-s=ok] i,.pill[data-s=ready] i{background:var(--ok)}
+.pill[data-s=loading] i,.pill[data-s=connecting] i{background:var(--amber)}
+.pill[data-s=error] i{background:var(--front)}
+
+.layout{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,1fr);align-items:start}
+.controls{background:var(--panel);padding:6px 32px 32px;min-height:calc(100vh - 118px)}
+.controls section{padding:20px 0 6px}
+.controls section+section{border-top:1px solid var(--line)}
+h2{font:600 1.1rem/1.2 var(--serif);margin:0 0 12px}
+.field{display:grid;gap:4px;margin:0 0 12px;font-size:.875rem;color:var(--ink-soft)}
+.field>label{color:var(--ink-soft)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.inline{display:flex;gap:8px}
+.hint{margin:-6px 0 12px;font-size:.8125rem;color:var(--ink-soft)}
+input,select,button{font:inherit}
+input[type=text],input[type=number],input[type=password],select{width:100%;padding:8px 10px;border:1px solid #b2c0cd;border-radius:4px;background:var(--field);color:var(--ink)}
+input[type=number]{font-family:var(--mono)}
+input[type=checkbox]{width:18px;height:18px;accent-color:var(--isobar)}
+button{cursor:pointer;border-radius:4px;padding:8px 14px;border:1px solid transparent}
+button:disabled{opacity:.4;cursor:default}
+button.primary{background:var(--isobar);color:#fff}
+button.primary:hover{background:var(--isobar-dark)}
+button.primary[data-on=true]{background:var(--front)}
+button.ghost{background:transparent;border-color:#8fa1b3;color:var(--ink)}
+button.ghost:hover:not(:disabled){background:#d6dfe7}
+button.link{background:none;border:0;padding:2px 0;color:var(--isobar);text-decoration:underline;text-underline-offset:2px}
+.buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;margin-bottom:8px}
+
+/* location list */
+.loclist{list-style:none;margin:0 0 14px;padding:0;display:grid;gap:2px}
+.loc{position:relative;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;padding:6px 4px 8px 10px;border-radius:4px;overflow:hidden}
+.loc.active{background:var(--field);box-shadow:inset 3px 0 0 var(--isobar)}
+.loc button.name{background:none;border:0;padding:0;text-align:left;color:var(--ink);font-weight:500;line-height:1.3}
+.loc.active button.name{font-weight:700}
+.loc button.name small{display:block;color:var(--ink-soft);font-size:.78rem;font-weight:400}
+.loc .tag{margin-left:8px;font-size:.75rem;font-weight:600;color:var(--isobar-dark)}
+.loc button.rm{background:none;border:0;color:var(--ink-soft);padding:2px 10px;font-size:1.2rem;line-height:1}
+.loc button.rm:hover:not(:disabled){color:var(--front)}
+.loc .prog{position:absolute;left:0;bottom:0;height:3px;width:0;background:var(--isobar)}
+details.coords{margin:0 0 10px;font-size:.875rem}
+details.coords summary{cursor:pointer;color:var(--isobar);text-decoration:underline;text-underline-offset:2px;margin-bottom:8px}
+
+/* monitor */
+.monitor{padding:20px 32px 48px;min-width:0}
+.nowbar{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 18px;margin:0 0 18px}
+.nowname{font:600 2rem/1.1 var(--serif);letter-spacing:-.01em}
+.nowsub{color:var(--ink-soft)}
+.monitor-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.tools{display:flex;gap:16px;font-size:.875rem}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:640px}
+th{text-align:left;font-size:.8125rem;font-weight:600;color:var(--ink-soft);padding:6px 10px;border-bottom:2px solid var(--ink)}
+td{padding:8px 10px;border-bottom:1px solid #d3dce4;vertical-align:middle}
+tr.group td{padding:18px 10px 6px;border-bottom:1px solid var(--ink);font:600 1rem/1.2 var(--serif)}
+tr.group small{font:400 .8125rem var(--sans);color:var(--ink-soft);margin-left:8px}
+tr.off td:not(:first-child){opacity:.45}
+td.nm small{display:block;color:var(--ink-soft);font-size:.78rem}
+td input.addr{font-family:var(--mono);font-size:.85rem;padding:6px 8px;min-width:170px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+td.reading{white-space:nowrap;font-size:.9rem}
+.sentcell{display:flex;align-items:center;gap:10px;min-width:170px}
+.bar{display:block;flex:1;height:10px;background:var(--frost);border-radius:5px;overflow:hidden}
+.bar>span{display:block;height:100%;width:0;background:var(--isobar)}
+.sentcell .num{width:76px;text-align:right;font-size:.9rem}
+.meta{margin:12px 0 0;color:var(--ink-soft);font-size:.875rem}
+details.help{margin:20px 0 8px;padding:12px 16px;background:var(--panel);border-radius:6px;font-size:.9rem}
+details.help summary{cursor:pointer;font-weight:600}
+details.help ol{margin:10px 0 0;padding-left:20px}
+details.help li{margin:4px 0}
+code{font-family:var(--mono);font-size:.85em;background:#d6dfe7;padding:1px 5px;border-radius:3px}
+.monitor h2.log-title{margin-top:28px}
+ol.log{list-style:none;margin:0;padding:0;max-height:240px;overflow:auto;font-size:.85rem}
+ol.log li{display:grid;grid-template-columns:76px 1fr;gap:8px;padding:3px 0;border-bottom:1px solid #dde4ea}
+ol.log time{font-family:var(--mono);color:var(--ink-soft)}
+ol.log li.err span{color:var(--front)}
+ol.log li.warn span{color:var(--amber)}
+ol.log li.ok span{color:var(--ok)}
+
+@media (max-width:900px){
+  .layout{grid-template-columns:1fr}
+  .controls{min-height:0}
+  .top,.controls,.monitor{padding-left:18px;padding-right:18px}
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div>
+    <h1>Weather to OSC</h1>
+    <p class="lede">Live weather from open APIs, sent as OSC to TouchDesigner.</p>
+  </div>
+  <div class="status">
+    <span class="pill" id="pillData" data-s="idle"><i></i><b>Data</b><span id="pillDataText">stopped</span></span>
+    <span class="pill" id="pillBridge" data-s="off"><i></i><b>Bridge</b><span id="pillBridgeText">not connected</span></span>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="controls">
+
+    <section>
+      <h2>Bridge and run</h2>
+      <div class="field">
+        <label for="bridge">Bridge address</label>
+        <input id="bridge" type="text" spellcheck="false">
+      </div>
+      <div class="buttons">
+        <button id="btnBridge" type="button" class="ghost">Connect bridge</button>
+        <button id="btnRun" type="button" class="primary" data-on="false">Start sending</button>
+      </div>
+      <div class="buttons">
+        <button id="btnFetch" type="button" class="ghost">Fetch now</button>
+        <button id="btnTest" type="button" class="ghost">Send once</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Weather source</h2>
+      <div class="field">
+        <label for="api">API</label>
+        <select id="api"></select>
+      </div>
+      <p class="hint" id="apiNote"></p>
+      <div class="field" id="keyRow" hidden>
+        <label for="key">API key (kept only in this browser)</label>
+        <input id="key" type="password" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="poll">Refresh data every (seconds)</label>
+        <input id="poll" type="number" min="30" max="3600" step="10">
+      </div>
+    </section>
+
+    <section>
+      <h2>Locations</h2>
+      <ul class="loclist" id="locList"></ul>
+      <div class="field">
+        <label for="place">Add a place</label>
+        <div class="inline">
+          <input id="place" type="text" placeholder="Search for a city">
+          <button id="btnSearch" type="button" class="ghost">Search</button>
+        </div>
+        <div class="inline" id="placeBox" hidden>
+          <select id="placeResults" aria-label="Search results"></select>
+          <button id="btnAddPlace" type="button" class="ghost">Add</button>
+        </div>
+      </div>
+      <details class="coords">
+        <summary>Add by coordinates</summary>
+        <div class="field"><label for="cName">Name (optional)</label><input id="cName" type="text"></div>
+        <div class="row">
+          <div class="field"><label for="cLat">Latitude</label><input id="cLat" type="number" step="0.0001" min="-90" max="90"></div>
+          <div class="field"><label for="cLon">Longitude</label><input id="cLon" type="number" step="0.0001" min="-180" max="180"></div>
+        </div>
+        <button id="btnAddCoords" type="button" class="ghost">Add location</button>
+      </details>
+      <p class="hint"><button id="btnGeo" type="button" class="link">Add this device's location</button></p>
+    </section>
+
+    <section>
+      <h2>Cycling</h2>
+      <div class="field">
+        <label for="cycleMode">Move between ticked locations</label>
+        <select id="cycleMode">
+          <option value="hold">Stay on the selected location</option>
+          <option value="order">In list order</option>
+          <option value="pingpong">Back and forth</option>
+          <option value="random">Random</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="field"><label for="dwell">Switch every (seconds)</label><input id="dwell" type="number" min="3" max="3600" step="1"></div>
+        <div class="field"><label for="morph">Glide to the next place (seconds)</label><input id="morph" type="number" min="0" max="600" step="1"></div>
+      </div>
+      <div class="buttons">
+        <button id="btnPrev" type="button" class="ghost">Previous</button>
+        <button id="btnNext" type="button" class="ghost">Next</button>
+      </div>
+      <p class="hint">Cycling runs while sending. Each location is fetched at most once per refresh interval, so quick cycling doesn't hammer the API. The next place is loaded ahead of time.</p>
+    </section>
+
+    <section>
+      <h2>OSC output</h2>
+      <div class="row">
+        <div class="field"><label for="host">Send to host</label><input id="host" type="text" spellcheck="false"></div>
+        <div class="field"><label for="port">Port</label><input id="port" type="number" min="1" max="65535"></div>
+      </div>
+      <div class="field">
+        <label for="base">Base address</label>
+        <input id="base" type="text" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="fmt">Message format</label>
+        <select id="fmt">
+          <option value="separate">One message per value</option>
+          <option value="single">One message, all numbers as arguments</option>
+          <option value="bundle">One OSC bundle</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="scale">Values</label>
+        <select id="scale">
+          <option value="raw">Real units (°C, hPa, m/s ...)</option>
+          <option value="normalized">Normalised from 0 to 1</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="field"><label for="rate">Send rate (per second)</label><input id="rate" type="number" min="0" max="60" step="1"></div>
+        <div class="field"><label for="glide">Smoothing (seconds)</label><input id="glide" type="number" min="0" max="600" step="1"></div>
+      </div>
+      <p class="hint">Rate 0 sends only when new data arrives. Smoothing glides from the old reading to the new one after each data refresh.</p>
+    </section>
+
+  </aside>
+
+  <section class="monitor">
+    <div class="nowbar">
+      <span class="nowname" id="nowName">–</span>
+      <span class="nowsub" id="nowSub"></span>
+    </div>
+    <div class="monitor-head">
+      <h2>Data to send</h2>
+      <div class="tools">
+        <button id="selAll" type="button" class="link">Select all</button>
+        <button id="selNone" type="button" class="link">Select none</button>
+      </div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>Data</th><th>OSC address</th><th>Reading</th><th>Sent</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p class="meta" id="meta">Press Fetch now to load a first reading.</p>
+
+    <details class="help">
+      <summary>Setting up TouchDesigner</summary>
+      <ol>
+        <li>Browsers can't send UDP, so run the small bridge next to this file: <code>node bridge.js</code></li>
+        <li>Open <code>http://localhost:8080</code> (or this file), then press Connect bridge.</li>
+        <li>In TouchDesigner add an <b>OSC In CHOP</b> and set its Network Port to the port above (7000 is the default).</li>
+        <li>Each ticked number arrives as its own channel, named after its address. The location name is text, so read it with an <b>OSC In DAT</b>. The same goes for "One message, all numbers as arguments".</li>
+        <li>To react to a location change, watch the location number channel (it steps 0, 1, 2 ...) or use the progress channel as a ramp from 0 to 1 between switches.</li>
+      </ol>
+    </details>
+
+    <h2 class="log-title">Activity</h2>
+    <ol class="log" id="log"></ol>
+  </section>
+</div>
+
+<script>
+// <core>
+// Everything in this block is free of DOM access so it can be tested on its own.
+
+const FIELDS = {
+  temperature:          {label:'Temperature',          unit:'°C',   min:-20,  max:40},
+  apparent_temperature: {label:'Feels like',           unit:'°C',   min:-20,  max:40},
+  humidity:             {label:'Humidity',             unit:'%',    min:0,    max:100},
+  pressure:             {label:'Pressure (sea level)', unit:'hPa',  min:960,  max:1050},
+  precipitation:        {label:'Precipitation',        unit:'mm',   min:0,    max:10},
+  rain:                 {label:'Rain',                 unit:'mm',   min:0,    max:10},
+  snowfall:             {label:'Snowfall',             unit:'cm',   min:0,    max:5},
+  cloud_cover:          {label:'Cloud cover',          unit:'%',    min:0,    max:100},
+  wind_speed:           {label:'Wind speed',           unit:'m/s',  min:0,    max:25},
+  wind_direction:       {label:'Wind direction',       unit:'°',    min:0,    max:360, circular:true, period:360},
+  wind_gust:            {label:'Wind gust',            unit:'m/s',  min:0,    max:35},
+  visibility:           {label:'Visibility',           unit:'m',    min:0,    max:30000},
+  weather_code:         {label:'Weather code (WMO)',   unit:'',     min:0,    max:99,  int:true},
+  is_day:               {label:'Daylight',             unit:'0 / 1',min:0,    max:1,   int:true},
+  uv_index:             {label:'UV index',             unit:'',     min:0,    max:11},
+  pm2_5:                {label:'Fine dust PM2.5',      unit:'µg/m³',min:0,    max:75},
+  pm10:                 {label:'Dust PM10',            unit:'µg/m³',min:0,    max:100},
+  carbon_monoxide:      {label:'Carbon monoxide',      unit:'µg/m³',min:0,    max:2000},
+  nitrogen_dioxide:     {label:'Nitrogen dioxide',     unit:'µg/m³',min:0,    max:200},
+  sulphur_dioxide:      {label:'Sulphur dioxide',      unit:'µg/m³',min:0,    max:200},
+  ozone:                {label:'Ozone',                unit:'µg/m³',min:0,    max:250},
+  european_aqi:         {label:'European air quality index', unit:'', min:0,   max:100},
+  wave_height:          {label:'Wave height',          unit:'m',    min:0,    max:6},
+  wave_direction:       {label:'Wave direction',       unit:'°',    min:0,    max:360, circular:true, period:360},
+  wave_period:          {label:'Wave period',          unit:'s',    min:0,    max:20},
+  wind_wave_height:     {label:'Wind wave height',     unit:'m',    min:0,    max:6},
+  swell_wave_height:    {label:'Swell height',         unit:'m',    min:0,    max:6},
+  // computed in this page, available with every API
+  location_name:        {label:'Location name',        unit:'text', string:true},
+  location_index:       {label:'Location number',      unit:'0, 1, 2 ...', min:0, max:1, int:true},
+  cycle_progress:       {label:'Progress to next location', unit:'0 to 1', min:0, max:1},
+  latitude:             {label:'Latitude',             unit:'°',    min:-90, max:90},
+  longitude:            {label:'Longitude',            unit:'°',    min:-180,max:180, circular:true, period:360},
+  solar_time:           {label:'Local solar time',     unit:'hours',min:0,    max:24},
+  sun_elevation:        {label:'Sun height',           unit:'°',    min:-90,  max:90},
+  sun_azimuth:          {label:'Sun direction',        unit:'°',    min:0,    max:360, circular:true, period:360}
+};
+const EXTRA = ['location_name','location_index','cycle_progress','latitude','longitude','solar_time','sun_elevation','sun_azimuth'];
+
+const WMO = {0:'clear',1:'mostly clear',2:'partly cloudy',3:'overcast',45:'fog',48:'rime fog',51:'light drizzle',53:'drizzle',55:'heavy drizzle',56:'freezing drizzle',57:'freezing drizzle',61:'light rain',63:'rain',65:'heavy rain',66:'freezing rain',67:'freezing rain',71:'light snow',73:'snow',75:'heavy snow',77:'snow grains',80:'light showers',81:'showers',82:'violent showers',85:'snow showers',86:'heavy snow showers',95:'thunderstorm',96:'thunderstorm with hail',99:'thunderstorm with heavy hail'};
+
+const num = v => { const n = typeof v === 'string' ? parseFloat(v) : v; return Number.isFinite(n) ? n : undefined; };
+function put(out, key, v, factor = 1, offset = 0){ const n = num(v); if (n !== undefined) out[key] = n * factor + offset; }
+function pick(obj, map){ const out = {}; for (const [k, src] of Object.entries(map)) put(out, k, obj && obj[src]); return out; }
+
+const PROVIDERS = {
+  openmeteo: {
+    label: 'Open-Meteo: weather',
+    note: 'No key needed. Current conditions from weather models, refreshed about every 15 minutes. Worldwide.',
+    fields: ['temperature','apparent_temperature','humidity','precipitation','rain','snowfall','weather_code','cloud_cover','pressure','wind_speed','wind_direction','wind_gust','is_day'],
+    url: s => `https://api.open-meteo.com/v1/forecast?latitude=${s.lat}&longitude=${s.lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,rain,snowfall,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day&wind_speed_unit=ms&timezone=auto`,
+    parse: j => pick(j.current, {temperature:'temperature_2m', apparent_temperature:'apparent_temperature', humidity:'relative_humidity_2m', precipitation:'precipitation', rain:'rain', snowfall:'snowfall', weather_code:'weather_code', cloud_cover:'cloud_cover', pressure:'pressure_msl', wind_speed:'wind_speed_10m', wind_direction:'wind_direction_10m', wind_gust:'wind_gusts_10m', is_day:'is_day'})
+  },
+  openmeteo_air: {
+    label: 'Open-Meteo: air quality',
+    note: 'No key needed. Particulates, gases, UV and the European air quality index, from the CAMS model.',
+    fields: ['european_aqi','pm2_5','pm10','nitrogen_dioxide','ozone','sulphur_dioxide','carbon_monoxide','uv_index'],
+    url: s => `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${s.lat}&longitude=${s.lon}&current=european_aqi,pm2_5,pm10,nitrogen_dioxide,ozone,sulphur_dioxide,carbon_monoxide,uv_index&timezone=auto`,
+    parse: j => pick(j.current, {european_aqi:'european_aqi', pm2_5:'pm2_5', pm10:'pm10', nitrogen_dioxide:'nitrogen_dioxide', ozone:'ozone', sulphur_dioxide:'sulphur_dioxide', carbon_monoxide:'carbon_monoxide', uv_index:'uv_index'})
+  },
+  openmeteo_marine: {
+    label: 'Open-Meteo: sea and waves',
+    note: 'No key needed. Wave and swell model. Only gives values for points at sea or on the coast, so inland locations are skipped.',
+    fields: ['wave_height','wave_direction','wave_period','wind_wave_height','swell_wave_height'],
+    url: s => `https://marine-api.open-meteo.com/v1/marine?latitude=${s.lat}&longitude=${s.lon}&current=wave_height,wave_direction,wave_period,wind_wave_height,swell_wave_height&timezone=auto`,
+    parse: j => pick(j.current, {wave_height:'wave_height', wave_direction:'wave_direction', wave_period:'wave_period', wind_wave_height:'wind_wave_height', swell_wave_height:'swell_wave_height'})
+  },
+  metno: {
+    label: 'MET Norway',
+    note: 'No key needed. Forecast model for the current hour. MET Norway asks for gentle use, so keep the refresh interval at 5 minutes or more.',
+    fields: ['temperature','humidity','pressure','cloud_cover','wind_speed','wind_direction','precipitation'],
+    url: s => `https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${Number(s.lat).toFixed(4)}&lon=${Number(s.lon).toFixed(4)}`,
+    parse: j => {
+      const t = j.properties && j.properties.timeseries && j.properties.timeseries[0];
+      const d = t && t.data && t.data.instant && t.data.instant.details;
+      const out = pick(d, {temperature:'air_temperature', humidity:'relative_humidity', pressure:'air_pressure_at_sea_level', cloud_cover:'cloud_area_fraction', wind_speed:'wind_speed', wind_direction:'wind_from_direction'});
+      const next = t && t.data && t.data.next_1_hours && t.data.next_1_hours.details;
+      put(out, 'precipitation', next && next.precipitation_amount);
+      return out;
+    }
+  },
+  brightsky: {
+    label: 'Bright Sky (German weather service)',
+    note: 'No key needed. Latest observations from the nearest DWD station. Best in Germany and nearby; some values can be missing.',
+    fields: ['temperature','humidity','pressure','cloud_cover','wind_speed','wind_direction','wind_gust','visibility','precipitation'],
+    url: s => `https://api.brightsky.dev/current_weather?lat=${s.lat}&lon=${s.lon}&units=dwd`,
+    parse: j => {
+      const w = j.weather || {}, out = {};
+      put(out,'temperature',w.temperature); put(out,'humidity',w.relative_humidity); put(out,'pressure',w.pressure_msl);
+      put(out,'cloud_cover',w.cloud_cover); put(out,'wind_speed',w.wind_speed_10,1/3.6); put(out,'wind_direction',w.wind_direction_10);
+      put(out,'wind_gust',w.wind_gust_speed_10,1/3.6); put(out,'visibility',w.visibility); put(out,'precipitation',w.precipitation_60);
+      return out;
+    }
+  },
+  wttr: {
+    label: 'wttr.in',
+    note: 'No key needed. Community service that can be slow or rate-limited. Keep the refresh interval at 5 minutes or more.',
+    fields: ['temperature','apparent_temperature','humidity','pressure','cloud_cover','wind_speed','wind_direction','visibility','precipitation','uv_index'],
+    url: s => `https://wttr.in/${s.lat},${s.lon}?format=j1`,
+    parse: j => {
+      const c = j.current_condition && j.current_condition[0] || {}, out = {};
+      put(out,'temperature',c.temp_C); put(out,'apparent_temperature',c.FeelsLikeC); put(out,'humidity',c.humidity);
+      put(out,'pressure',c.pressure); put(out,'cloud_cover',c.cloudcover); put(out,'wind_speed',c.windspeedKmph,1/3.6);
+      put(out,'wind_direction',c.winddirDegree); put(out,'visibility',c.visibility,1000); put(out,'precipitation',c.precipMM);
+      put(out,'uv_index',c.uvIndex);
+      return out;
+    }
+  },
+  owm: {
+    label: 'OpenWeatherMap (needs a free key)',
+    note: 'Create a free key at openweathermap.org and paste it below. New keys can take an hour or two to activate.',
+    needsKey: true,
+    fields: ['temperature','apparent_temperature','humidity','pressure','cloud_cover','wind_speed','wind_direction','wind_gust','visibility','precipitation','snowfall'],
+    url: s => `https://api.openweathermap.org/data/2.5/weather?lat=${s.lat}&lon=${s.lon}&units=metric&appid=${encodeURIComponent(s.key)}`,
+    parse: j => {
+      const m = j.main || {}, w = j.wind || {}, out = {};
+      put(out,'temperature',m.temp); put(out,'apparent_temperature',m.feels_like); put(out,'humidity',m.humidity);
+      put(out,'pressure',m.pressure); put(out,'cloud_cover',j.clouds && j.clouds.all); put(out,'wind_speed',w.speed);
+      put(out,'wind_direction',w.deg); put(out,'wind_gust',w.gust); put(out,'visibility',j.visibility);
+      const rain = num(j.rain && j.rain['1h']) || 0, snow = num(j.snow && j.snow['1h']) || 0;
+      out.precipitation = rain + snow; out.snowfall = snow / 10;
+      return out;
+    }
+  }
+};
+
+// ---- helpers shared by the UI and the tests ----
+const mod = (x, p) => ((x % p) + p) % p;
+function cleanAddress(a){ let s = String(a || '').trim().replace(/\s+/g, '_'); if (!s.startsWith('/')) s = '/' + s; return s.length > 1 && s.endsWith('/') ? s.slice(0, -1) : s; }
+function defaultAddress(base, key){ const b = cleanAddress(base); return (b === '/' ? '' : b) + '/' + key; }
+function norm(key, v, max){ const f = FIELDS[key], hi = max !== undefined ? max : f.max; return Math.min(1, Math.max(0, (v - f.min) / (hi - f.min))); }
+function wrapTo(f, x){ return f.min + mod(x - f.min, f.period); }
+// Value part-way (t from 0 to 1) between a and b. Circular fields take the short way round.
+function glideValue(f, a, b, t){
+  if (f.int || t >= 1) return b;
+  if (f.circular){ const d = mod(b - a + f.period / 2, f.period) - f.period / 2; return wrapTo(f, a + d * t); }
+  return a + (b - a) * t;
+}
+
+// Sun position from date, latitude and longitude (low-precision astronomical formulas, about 0.1 degree).
+function sunPosition(ms, lat, lon){
+  const rad = Math.PI / 180;
+  const n = ms / 86400000 + 2440587.5 - 2451545.0;                 // days since J2000
+  const L = mod(280.460 + 0.9856474 * n, 360);
+  const g = mod(357.528 + 0.9856003 * n, 360) * rad;
+  const lambda = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+  const eps = (23.439 - 0.0000004 * n) * rad;
+  const ra = Math.atan2(Math.cos(eps) * Math.sin(lambda), Math.cos(lambda));
+  const dec = Math.asin(Math.sin(eps) * Math.sin(lambda));
+  const gmst = mod(18.697374558 + 24.06570982441908 * n, 24);     // hours
+  const ha = (gmst * 15 + lon) * rad - ra;                         // hour angle
+  const phi = lat * rad;
+  const s = Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(ha);
+  const elevation = Math.asin(Math.max(-1, Math.min(1, s))) / rad;
+  const azSouth = Math.atan2(Math.sin(ha), Math.cos(ha) * Math.sin(phi) - Math.tan(dec) * Math.cos(phi));
+  return {elevation, azimuth: mod(azSouth / rad + 180, 360)};      // azimuth: 0 = north, 90 = east
+}
+// Mean local solar time in hours (0 to 24) for a longitude.
+function solarTime(ms, lon){
+  const d = new Date(ms);
+  return mod(d.getUTCHours() + d.getUTCMinutes() / 60 + d.getUTCSeconds() / 3600 + d.getUTCMilliseconds() / 3600000 + lon / 15, 24);
+}
+
+// ---- OSC 1.0 encoding ----
+const _enc = new TextEncoder();
+function oscStr(s){ const b = _enc.encode(s), n = b.length + 1, out = new Uint8Array(n + ((4 - n % 4) % 4)); out.set(b); return out; }
+function concat(arrs){ let n = 0; for (const a of arrs) n += a.length; const out = new Uint8Array(n); let o = 0; for (const a of arrs){ out.set(a, o); o += a.length; } return out; }
+function oscArg(a){ const b = new Uint8Array(4), dv = new DataView(b.buffer); if (a.t === 'f') dv.setFloat32(0, a.v, false); else dv.setInt32(0, a.v | 0, false); return b; }
+function encodeMessage(address, args){
+  const parts = [oscStr(address), oscStr(',' + args.map(a => a.t).join(''))];
+  for (const a of args) parts.push(a.t === 's' ? oscStr(a.v) : oscArg(a));
+  return concat(parts);
+}
+function encodeBundle(msgs){
+  const head = new Uint8Array(16); head.set(_enc.encode('#bundle'), 0); head[15] = 1; // time tag 1 = "immediately"
+  const parts = [head];
+  for (const m of msgs){ const sz = new Uint8Array(4); new DataView(sz.buffer).setInt32(0, m.length, false); parts.push(sz, m); }
+  return concat(parts);
+}
+// items: [{address, arg:{t,v}}]  ->  array of packets to send
+function buildPackets(items, fmt, base){
+  if (!items.length) return [];
+  if (fmt === 'single') return [encodeMessage(base, items.map(i => i.arg))];
+  const msgs = items.map(i => encodeMessage(i.address, [i.arg]));
+  return fmt === 'bundle' ? [encodeBundle(msgs)] : msgs;
+}
+// </core>
+
+// ================= UI =================
+const $ = id => document.getElementById(id);
+const STORE = 'weatherOsc.v1';
+const DEFAULT_LOCATIONS = [
+  {name:'Groningen', lat:53.2194, lon:6.5665,   note:'Netherlands'},
+  {name:'Reykjavik', lat:64.1466, lon:-21.9426, note:'Iceland'},
+  {name:'Singapore', lat:1.3521,  lon:103.8198, note:'Singapore'},
+  {name:'Cairo',     lat:30.0444, lon:31.2357,  note:'Egypt'},
+  {name:'Sydney',    lat:-33.8688,lon:151.2093, note:'Australia'},
+  {name:'Lima',      lat:-12.0464,lon:-77.0428, note:'Peru'}
+];
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const DEFAULTS = {
+  api:'openmeteo', key:'', poll:300,
+  bridge: location.protocol === 'http:' ? 'ws://' + location.host : 'ws://localhost:8080',
+  host:'127.0.0.1', port:7000, base:'/weather', fmt:'separate', scale:'raw', rate:10, glide:20,
+  cycleMode:'hold', dwell:30, morph:8, enabled:{}, addr:{}, locations:null
+};
+let saved = {};
+try { saved = JSON.parse(localStorage.getItem(STORE) || '{}'); } catch (e) {}
+let state = Object.assign({}, DEFAULTS, saved);
+delete state.lat; delete state.lon; delete state.place;
+if (!PROVIDERS[state.api]) state.api = 'openmeteo';
+state.enabled = state.enabled || {}; state.addr = state.addr || {};
+if (!Array.isArray(state.locations) || !state.locations.length){
+  state.locations = DEFAULT_LOCATIONS.map(l => Object.assign({id:newId(), on:true}, l));
+  // keep a location chosen in the first version of this page
+  if (typeof saved.lat === 'number' && typeof saved.lon === 'number' && (Math.abs(saved.lat - 53.2194) > 1e-4 || Math.abs(saved.lon - 6.5665) > 1e-4))
+    state.locations.unshift({id:newId(), on:true, name:saved.place || 'My place', lat:saved.lat, lon:saved.lon});
+}
+state.locations.forEach(l => { if (!l.id) l.id = newId(); });
+const save = () => { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {} };
+
+// ---- runtime state ----
+let running = false, nextPoll = 0, lastFetch = 0, pendingSend = false, pendingName = true, lastNameSent = 0;
+const newData = () => ({from:{}, to:{}, cur:{}, live:{}, t0:0, glideMs:0});
+let data = newData();
+const counters = {packets:0};
+const cache = {}, inflight = {};
+const cycle = {t0:Date.now(), dir:1, nextId:null};
+let rowEls = {}, locEls = {};
+
+const locById = id => state.locations.find(l => l.id === id);
+const posOf = id => state.locations.findIndex(l => l.id === id);
+const enabledIds = () => state.locations.filter(l => l.on !== false).map(l => l.id);
+let activeId = (state.locations.find(l => l.on !== false) || state.locations[0]).id;
+const activeLoc = () => locById(activeId);
+const clampPoll = () => Math.min(3600, Math.max(30, Math.round(state.poll)));
+const dwellSec = () => Math.max(3, Number(state.dwell) || 30);
+const rowKeys = () => PROVIDERS[state.api].fields.concat(EXTRA);
+
+// ---- log and status ----
+function log(msg, kind = ''){
+  const li = document.createElement('li'); if (kind) li.className = kind;
+  const t = document.createElement('time'), s = document.createElement('span');
+  t.textContent = new Date().toLocaleTimeString([], {hour12:false}); s.textContent = msg;
+  li.append(t, s); $('log').prepend(li);
+  while ($('log').children.length > 80) $('log').lastChild.remove();
+}
+function setPill(id, s, text){ $(id).dataset.s = s; $(id + 'Text').textContent = text; }
+const setData = (s, t) => setPill('pillData', s, t);
+const setBridge = (s, t) => setPill('pillBridge', s, t);
+
+// ---- form bindings ----
+const binds = [['key','text'],['poll','num'],['bridge','text'],['host','text'],['port','num'],['base','text'],['fmt','text'],['scale','text'],['rate','num'],['glide','num'],['cycleMode','text'],['dwell','num'],['morph','num']];
+for (const [id, type] of binds){
+  const el = $(id); el.value = state[id];
+  const handler = () => {
+    const v = type === 'num' ? parseFloat(el.value) : el.value;
+    if (type === 'num' && !Number.isFinite(v)) return;
+    if (state[id] === v) return;
+    state[id] = v; save(); onChanged(id);
+  };
+  el.addEventListener('input', handler); el.addEventListener('change', handler);
+}
+function onChanged(id){
+  if (id === 'host' || id === 'port') sendTarget();
+  else if (id === 'base') refreshAddresses();
+  else if (id === 'rate'){ if (running){ startTicker(); pendingSend = true; } }
+  else if (id === 'key'){ if (running) nextPoll = Date.now() + 800; }
+  else if (id === 'poll'){ if (running) nextPoll = lastFetch + clampPoll() * 1000; }
+  else if (id === 'cycleMode'){
+    cycle.t0 = Date.now(); cycle.nextId = state.cycleMode === 'hold' ? null : pickNext(activeId);
+    prefetchNext(); renderLocations();
+  }
+}
+
+// ---- API select ----
+for (const [id, p] of Object.entries(PROVIDERS)){
+  const o = document.createElement('option'); o.value = id; o.textContent = p.label; $('api').append(o);
+}
+$('api').value = state.api;
+$('api').addEventListener('change', () => {
+  state.api = $('api').value; save(); data = newData(); renderRows(); showProvider();
+  if (running){ lastFetch = Date.now(); nextPoll = lastFetch + clampPoll() * 1000; }
+  loadAndApply(activeLoc(), {glide:0}); prefetchNext();
+});
+function showProvider(){
+  const p = PROVIDERS[state.api];
+  $('apiNote').textContent = p.note; $('keyRow').hidden = !p.needsKey;
+}
+
+// ---- locations ----
+const fmtCoord = l => `${l.lat.toFixed(2)}, ${l.lon.toFixed(2)}`;
+function renderLocations(){
+  const ul = $('locList'); ul.textContent = ''; locEls = {};
+  for (const loc of state.locations){
+    const li = document.createElement('li'); li.className = 'loc' + (loc.id === activeId ? ' active' : '');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = loc.on !== false;
+    cb.title = 'Include in the cycle'; cb.setAttribute('aria-label', 'Include ' + loc.name + ' in the cycle');
+    const nm = document.createElement('button'); nm.type = 'button'; nm.className = 'name'; nm.title = 'Show this location now';
+    nm.setAttribute('aria-current', loc.id === activeId ? 'true' : 'false');
+    const label = document.createElement('span'); label.textContent = loc.name;
+    const tag = document.createElement('span'); tag.className = 'tag';
+    tag.textContent = loc.id === activeId ? 'now' : (loc.id === cycle.nextId ? 'next' : '');
+    const small = document.createElement('small'); small.textContent = loc.note ? `${loc.note} · ${fmtCoord(loc)}` : fmtCoord(loc);
+    nm.append(label, tag, small);
+    const rm = document.createElement('button'); rm.type = 'button'; rm.className = 'rm'; rm.textContent = '×';
+    rm.setAttribute('aria-label', 'Remove ' + loc.name); rm.title = 'Remove'; rm.disabled = state.locations.length < 2;
+    const prog = document.createElement('span'); prog.className = 'prog';
+    li.append(cb, nm, rm, prog);
+    cb.onchange = () => {
+      loc.on = cb.checked; save();
+      if (state.cycleMode !== 'hold'){ cycle.nextId = pickNext(activeId); prefetchNext(); }
+      renderLocations();
+    };
+    nm.onclick = () => setActive(loc.id);
+    rm.onclick = () => removeLoc(loc.id);
+    ul.append(li); locEls[loc.id] = {li, prog};
+  }
+}
+function addLocation(name, lat, lon, note){
+  if (state.locations.length >= 50){ log('The list is full (50 locations).', 'warn'); return; }
+  const loc = {id:newId(), on:true, name, lat:+lat.toFixed(4), lon:+lon.toFixed(4)}; if (note) loc.note = note;
+  state.locations.push(loc); save(); log(`Added ${name} (${loc.lat}, ${loc.lon})`);
+  if (state.cycleMode === 'hold') setActive(loc.id);
+  else { cycle.nextId = pickNext(activeId); renderLocations(); }
+}
+function removeLoc(id){
+  if (state.locations.length < 2) return;
+  state.locations.splice(posOf(id), 1); save();
+  if (id === activeId) setActive((state.locations.find(l => l.on !== false) || state.locations[0]).id);
+  else { if (state.cycleMode !== 'hold') cycle.nextId = pickNext(activeId); renderLocations(); }
+}
+let geo = [];
+async function searchPlace(){
+  const q = $('place').value.trim(); if (!q) return;
+  try {
+    const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=6&language=en&format=json`);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    geo = (await r.json()).results || [];
+    if (!geo.length){ log(`No place found for "${q}"`, 'warn'); $('placeBox').hidden = true; return; }
+    const sel = $('placeResults'); sel.textContent = '';
+    geo.forEach((g, i) => { const o = document.createElement('option'); o.value = i; o.textContent = [g.name, g.admin1, g.country].filter(Boolean).join(', '); sel.append(o); });
+    $('placeBox').hidden = false;
+  } catch (e){ log('Place search failed: ' + e.message, 'err'); }
+}
+$('btnSearch').onclick = searchPlace;
+$('place').addEventListener('keydown', e => { if (e.key === 'Enter') searchPlace(); });
+$('btnAddPlace').onclick = () => {
+  const g = geo[+$('placeResults').value]; if (!g) return;
+  addLocation(g.name, g.latitude, g.longitude, [g.admin1, g.country].filter(Boolean).join(', '));
+  $('placeBox').hidden = true; $('place').value = '';
+};
+$('btnAddCoords').onclick = () => {
+  const lat = parseFloat($('cLat').value), lon = parseFloat($('cLon').value);
+  if (!(lat >= -90 && lat <= 90) || !(lon >= -180 && lon <= 180)){ log('Enter a latitude from -90 to 90 and a longitude from -180 to 180.', 'warn'); return; }
+  addLocation($('cName').value.trim() || `${lat.toFixed(2)}, ${lon.toFixed(2)}`, lat, lon);
+  $('cName').value = $('cLat').value = $('cLon').value = '';
+};
+$('btnGeo').onclick = () => {
+  if (!navigator.geolocation){ log('This browser cannot share a location.', 'warn'); return; }
+  navigator.geolocation.getCurrentPosition(pos => addLocation('My location', pos.coords.latitude, pos.coords.longitude),
+    err => log('Could not read the device location: ' + err.message, 'warn'));
+};
+
+// ---- cycling ----
+function pickNext(fromId){
+  const list = enabledIds(); if (!list.length) return null; if (list.length === 1) return list[0];
+  const mode = state.cycleMode === 'hold' ? 'order' : state.cycleMode;
+  if (mode === 'random'){ let id; do { id = list[Math.floor(Math.random() * list.length)]; } while (id === fromId); return id; }
+  const pos = list.indexOf(fromId);
+  if (pos < 0) return list[0];
+  if (mode === 'pingpong'){ let np = pos + cycle.dir; if (np < 0 || np >= list.length){ cycle.dir = -cycle.dir; np = pos + cycle.dir; } return list[np]; }
+  return list[(pos + 1) % list.length];
+}
+function pickPrev(fromId){
+  const list = enabledIds(); if (!list.length) return null; if (list.length === 1) return list[0];
+  const pos = list.indexOf(fromId);
+  return pos < 0 ? list[list.length - 1] : list[(pos - 1 + list.length) % list.length];
+}
+function setActive(id){
+  const loc = locById(id); if (!loc) return;
+  activeId = id; cycle.t0 = Date.now();
+  cycle.nextId = state.cycleMode === 'hold' ? null : pickNext(id);
+  if (running){ lastFetch = cycle.t0; nextPoll = cycle.t0 + clampPoll() * 1000; }
+  pendingName = true; pendingSend = true;
+  renderLocations(); log(`Location: ${loc.name}`);
+  loadAndApply(loc, {glide: Math.min(Math.max(0, Number(state.morph) || 0), dwellSec()), moveOnFail: true});
+  prefetchNext();
+}
+function advance(dir){
+  if (!enabledIds().length){ cycle.t0 = Date.now(); return; }
+  let id;
+  if (dir > 0){ const n = locById(cycle.nextId); id = (n && n.on !== false && n.id !== activeId) ? n.id : pickNext(activeId); }
+  else id = pickPrev(activeId);
+  if (id && id !== activeId) setActive(id); else cycle.t0 = Date.now();
+}
+function prefetchNext(){
+  if (!running || state.cycleMode === 'hold' || !cycle.nextId) return;
+  const l = locById(cycle.nextId); if (!l || l.id === activeId) return;
+  loadLocation(l, false).catch(() => {});
+}
+$('btnNext').onclick = () => advance(1);
+$('btnPrev').onclick = () => advance(-1);
+
+// ---- table of data types ----
+const addrFor = key => cleanAddress(state.addr[key] != null ? state.addr[key] : defaultAddress(state.base, key));
+function renderRows(){
+  rowEls = {}; const tb = $('rows'); tb.textContent = '';
+  const group = (title, note) => {
+    const tr = document.createElement('tr'); tr.className = 'group';
+    const td = document.createElement('td'); td.colSpan = 5; td.textContent = title;
+    if (note){ const s = document.createElement('small'); s.textContent = note; td.append(s); }
+    tr.append(td); tb.append(tr);
+  };
+  const addRow = key => {
+    const f = FIELDS[key], tr = document.createElement('tr');
+    tr.innerHTML = `<td><input type="checkbox" aria-label="Send ${f.label}"></td>
+      <td class="nm">${f.label}<small>${f.unit || 'unitless'}</small></td>
+      <td><input class="addr" type="text" spellcheck="false" aria-label="OSC address for ${f.label}"></td>
+      <td class="reading mono">–</td>
+      <td><div class="sentcell"><span class="bar"><span></span></span><span class="num mono">–</span></div></td>`;
+    const r = rowEls[key] = {tr, cb: tr.querySelector('input[type=checkbox]'), addr: tr.querySelector('input.addr'),
+      reading: tr.querySelector('.reading'), bar: tr.querySelector('.bar>span'), num: tr.querySelector('.num')};
+    if (f.string) r.bar.parentElement.style.visibility = 'hidden';
+    r.cb.checked = state.enabled[key] !== false; tr.classList.toggle('off', !r.cb.checked);
+    r.addr.value = addrFor(key);
+    r.cb.addEventListener('change', () => { state.enabled[key] = r.cb.checked; tr.classList.toggle('off', !r.cb.checked); save(); });
+    r.addr.addEventListener('input', () => { if (r.addr.value.trim() === '') delete state.addr[key]; else state.addr[key] = r.addr.value; save(); });
+    r.addr.addEventListener('blur', () => { r.addr.value = addrFor(key); });
+    tb.append(tr);
+  };
+  group('Weather');
+  PROVIDERS[state.api].fields.forEach(addRow);
+  group('Location and sun', 'computed here, works with every API');
+  EXTRA.forEach(addRow);
+  render(true);
+}
+function refreshAddresses(){
+  for (const key in rowEls) if (state.addr[key] == null) rowEls[key].addr.value = addrFor(key);
+}
+function setAll(on){ for (const key in rowEls){ state.enabled[key] = on; rowEls[key].cb.checked = on; rowEls[key].tr.classList.toggle('off', !on); } save(); }
+$('selAll').onclick = () => setAll(true); $('selNone').onclick = () => setAll(false);
+
+// ---- data: fetch, cache, smoothing ----
+async function loadLocation(loc, force){
+  const api = state.api, p = PROVIDERS[api], key = `${api}|${loc.lat}|${loc.lon}`, hit = cache[key];
+  if (!force && hit && Date.now() - hit.time < clampPoll() * 1000) return hit.vals;
+  if (inflight[key]) return inflight[key];
+  inflight[key] = (async () => {
+    try {
+      const res = await fetch(p.url({lat:loc.lat, lon:loc.lon, key:state.key}), {cache:'no-store'});
+      if (!res.ok) throw new Error('HTTP ' + res.status + (res.status === 401 ? ' (check the API key)' : ''));
+      const vals = p.parse(await res.json());
+      if (!Object.keys(vals).length) throw new Error('The API returned no values for this location');
+      cache[key] = {vals, time:Date.now()};
+      log(`${loc.name}: ${Object.keys(vals).length} values from ${p.label}`, 'ok');
+      return vals;
+    } finally { delete inflight[key]; }
+  })();
+  return inflight[key];
+}
+async function loadAndApply(loc, opt = {}){
+  if (!loc) return;
+  const api = state.api, p = PROVIDERS[api], glide = opt.glide !== undefined ? opt.glide : state.glide;
+  if (p.needsKey && !String(state.key).trim()){
+    log('This API needs a key. Paste it into the API key field.', 'warn'); setData('error', 'key needed');
+    if (opt.moveOnFail) applyData({}, loc, glide);
+    return;
+  }
+  setData('loading', 'fetching');
+  try {
+    const vals = await loadLocation(loc, !!opt.force);
+    if (activeId !== loc.id || state.api !== api) return;
+    applyData(vals, loc, glide);
+    setData('ok', running ? 'live' : 'loaded');
+  } catch (e){
+    if (activeId !== loc.id || state.api !== api) return;
+    setData('error', 'failed'); log(`${loc.name}: ${e.message}`, 'err');
+    if (opt.moveOnFail) applyData({}, loc, glide);   // still move to the new place, weather values hold
+  }
+  render(true);
+}
+function applyData(vals, loc, glideSec){
+  const now = Date.now(), instant = !running || state.rate <= 0 || glideSec <= 0;
+  stepGlide(now);
+  for (const k in data.to) data.from[k] = data.cur[k];
+  const all = Object.assign({}, vals, {latitude: loc.lat, longitude: loc.lon});
+  for (const [k, v] of Object.entries(all)){
+    data.to[k] = v;
+    if (instant || !(k in data.cur)){ data.from[k] = v; data.cur[k] = v; }
+  }
+  data.t0 = now; data.glideMs = glideSec * 1000; pendingSend = true;
+}
+function stepGlide(now){
+  const t = data.glideMs > 0 ? Math.min(1, (now - data.t0) / data.glideMs) : 1;
+  for (const k in data.to) data.cur[k] = glideValue(FIELDS[k], data.from[k], data.to[k], t);
+}
+// values that are computed continuously rather than fetched
+function computeLive(now){
+  const L = data.live, lat = data.cur.latitude, lon = data.cur.longitude;
+  L.location_index = Math.max(0, posOf(activeId));
+  L.cycle_progress = (running && state.cycleMode !== 'hold') ? Math.min(1, (now - cycle.t0) / (dwellSec() * 1000)) : 0;
+  if (lat !== undefined && lon !== undefined){
+    const s = sunPosition(now, lat, lon);
+    L.sun_elevation = s.elevation; L.sun_azimuth = s.azimuth; L.solar_time = solarTime(now, lon);
+  }
+}
+const getCur = key => key in data.cur ? data.cur[key] : data.live[key];
+const getRaw = key => key in data.to ? data.to[key] : data.live[key];
+
+// ---- sending ----
+function argFor(key){
+  const v = getCur(key), f = FIELDS[key];
+  if (state.scale === 'normalized') return {t:'f', v: norm(key, v, key === 'location_index' ? Math.max(1, state.locations.length - 1) : undefined)};
+  return f.int ? {t:'i', v: Math.round(v)} : {t:'f', v};
+}
+function collect(now){
+  const items = [];
+  for (const key of rowKeys()){
+    if (state.enabled[key] === false) continue;
+    if (key === 'location_name'){
+      const loc = activeLoc();
+      if (!loc || state.fmt === 'single') continue;                       // text can't ride along with numbers
+      if (pendingName || now - lastNameSent > 2000) items.push({key, address: addrFor(key), arg:{t:'s', v: loc.name}});
+      continue;
+    }
+    if (getCur(key) === undefined) continue;
+    items.push({key, address: addrFor(key), arg: argFor(key)});
+  }
+  return items;
+}
+function sendNow(){
+  if (!bridge.open) return 0;
+  const now = Date.now(); computeLive(now);
+  const items = collect(now);
+  const packets = buildPackets(items.map(i => ({address:i.address, arg:i.arg})), state.fmt, cleanAddress(state.base));
+  for (const p of packets) bridge.ws.send(p);
+  if (items.some(i => i.key === 'location_name')){ pendingName = false; lastNameSent = now; }
+  counters.packets += packets.length; return packets.length;
+}
+
+// ---- bridge connection (WebSocket to the local node bridge, which forwards UDP) ----
+const bridge = {ws:null, open:false, want:false, retry:null, failLogged:false};
+function sendTarget(){
+  if (bridge.open) bridge.ws.send(JSON.stringify({type:'target', host: String(state.host).trim(), port: Math.round(state.port)}));
+}
+function connectBridge(){
+  bridge.want = true; clearTimeout(bridge.retry);
+  let ws;
+  try { ws = new WebSocket(String(state.bridge).trim()); }
+  catch (e){ bridge.want = false; setBridge('error', 'bad address'); log('The bridge address is not valid: ' + state.bridge, 'err'); updateButtons(); return; }
+  bridge.ws = ws; ws.binaryType = 'arraybuffer'; setBridge('connecting', 'connecting');
+  ws.onopen = () => { bridge.open = true; bridge.failLogged = false; pendingName = true; setBridge('ready', 'ready'); sendTarget(); log('Bridge connected', 'ok'); updateButtons(); };
+  ws.onmessage = ev => {
+    if (typeof ev.data !== 'string') return;
+    try {
+      const m = JSON.parse(ev.data);
+      if (m.type === 'target'){ setBridge('ready', 'ready'); log(`Bridge forwards OSC to ${m.host}:${m.port}`, 'ok'); }
+      else if (m.type === 'error'){ setBridge('error', 'send error'); log('Bridge: ' + m.message, 'err'); }
+    } catch (e) {}
+  };
+  ws.onerror = () => {
+    if (!bridge.failLogged){ bridge.failLogged = true; log(`Cannot reach the bridge at ${state.bridge}. Start it with: node bridge.js`, 'err'); }
+  };
+  ws.onclose = () => {
+    bridge.open = false; bridge.ws = null;
+    if (bridge.want){ setBridge('connecting', 'retrying'); bridge.retry = setTimeout(connectBridge, 2000); }
+    else setBridge('off', 'not connected');
+    updateButtons();
+  };
+}
+function disconnectBridge(){ bridge.want = false; clearTimeout(bridge.retry); if (bridge.ws) bridge.ws.close(); else setBridge('off', 'not connected'); updateButtons(); }
+$('btnBridge').onclick = () => (bridge.want ? disconnectBridge() : connectBridge());
+
+// ---- ticker (a Worker timer keeps running when the tab is in the background) ----
+let worker = null, fallbackTimer = null;
+function tickMs(){ return state.rate > 0 ? Math.max(8, Math.round(1000 / Math.min(60, state.rate))) : 200; }
+function startTicker(){
+  stopTicker(); const ms = tickMs();
+  try {
+    if (!worker){
+      const src = 'let t=null;onmessage=e=>{if(t)clearInterval(t);t=null;if(e.data>0)t=setInterval(()=>postMessage(0),e.data)}';
+      worker = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})));
+      worker.onmessage = tick;
+    }
+    worker.postMessage(ms);
+  } catch (e){ worker = null; fallbackTimer = setInterval(tick, ms); }
+}
+function stopTicker(){ if (worker) worker.postMessage(0); if (fallbackTimer){ clearInterval(fallbackTimer); fallbackTimer = null; } }
+function tick(){
+  if (!running) return;
+  const now = Date.now();
+  if (state.cycleMode !== 'hold' && now - cycle.t0 >= dwellSec() * 1000) advance(1);
+  if (now >= nextPoll){ lastFetch = now; nextPoll = now + clampPoll() * 1000; loadAndApply(activeLoc(), {force:true}); }
+  stepGlide(now);
+  if (state.rate > 0) sendNow(); else if (pendingSend){ sendNow(); pendingSend = false; }
+  render();
+}
+
+// ---- run controls ----
+$('btnRun').onclick = () => {
+  running = !running;
+  if (running){
+    cycle.t0 = Date.now(); cycle.nextId = state.cycleMode === 'hold' ? null : pickNext(activeId);
+    nextPoll = 0; pendingSend = true; pendingName = true;
+    setData('loading', 'starting'); startTicker(); prefetchNext(); renderLocations(); tick();
+    if (!bridge.open) log('Sending has started, but the bridge is not connected yet. Press Connect bridge.', 'warn');
+  } else {
+    stopTicker(); const has = Object.keys(data.to).length > 0;
+    setData(has ? 'ok' : 'idle', has ? 'loaded' : 'stopped');
+  }
+  updateButtons(); render(true);
+};
+$('btnFetch').onclick = () => {
+  if (running){ lastFetch = Date.now(); nextPoll = lastFetch + clampPoll() * 1000; }
+  loadAndApply(activeLoc(), {force:true});
+};
+$('btnTest').onclick = () => {
+  if (!Object.keys(data.cur).length){ log('Nothing to send yet. Press Fetch now first.', 'warn'); return; }
+  if (!bridge.open){ log('The bridge is not connected. Press Connect bridge.', 'warn'); return; }
+  pendingName = true;
+  const n = sendNow(); log(`Sent ${n} OSC packet${n === 1 ? '' : 's'} to ${state.host}:${state.port}`, 'ok'); render(true);
+};
+function updateButtons(){
+  $('btnRun').textContent = running ? 'Stop sending' : 'Start sending'; $('btnRun').dataset.on = running;
+  $('btnBridge').textContent = bridge.want ? 'Disconnect bridge' : 'Connect bridge';
+}
+
+// ---- display ----
+const fmtNum = v => Number.isInteger(v) ? String(v) : v.toFixed(Math.abs(v) < 10 ? 2 : 1);
+function readingText(key, v){
+  const f = FIELDS[key];
+  if (key === 'weather_code') return `${v} ${WMO[v] || ''}`.trim();
+  if (key === 'location_index') return `${v + 1} of ${state.locations.length}`;
+  if (key === 'cycle_progress') return Math.round(v * 100) + ' %';
+  if (key === 'solar_time'){ const h = Math.floor(v), m = Math.floor((v - h) * 60); return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); }
+  return `${fmtNum(v)} ${f.unit}`.trim();
+}
+let lastRender = 0;
+function render(force){
+  const t = performance.now(); if (!force && t - lastRender < 80) return; lastRender = t;
+  const now = Date.now(); computeLive(now);
+  const loc = activeLoc();
+  for (const key in rowEls){
+    const r = rowEls[key], f = FIELDS[key];
+    if (key === 'location_name'){ r.reading.textContent = loc ? loc.name : '–'; r.num.textContent = 'text'; continue; }
+    const raw = getRaw(key);
+    if (raw === undefined){ r.reading.textContent = '–'; r.num.textContent = '–'; r.bar.style.width = '0%'; continue; }
+    r.reading.textContent = readingText(key, raw);
+    const a = argFor(key);
+    r.bar.style.width = (norm(key, getCur(key), key === 'location_index' ? Math.max(1, state.locations.length - 1) : undefined) * 100).toFixed(1) + '%';
+    r.num.textContent = a.t === 'i' ? String(a.v) : a.v.toFixed(3);
+  }
+  const cycling = state.cycleMode !== 'hold';
+  const progress = running && cycling ? Math.min(1, (now - cycle.t0) / (dwellSec() * 1000)) : 0;
+  for (const id in locEls) locEls[id].prog.style.width = (id === activeId ? progress * 100 : 0).toFixed(1) + '%';
+  $('nowName').textContent = loc ? loc.name : '–';
+  let sub = 'Staying on this location';
+  if (cycling && running && cycle.nextId){
+    const nl = locById(cycle.nextId), left = Math.max(0, Math.ceil((dwellSec() * 1000 - (now - cycle.t0)) / 1000));
+    sub = `Next: ${nl ? nl.name : '–'} in ${left} s`;
+  } else if (cycling) sub = running ? 'Tick at least two locations to cycle' : 'Cycling starts when you press Start sending';
+  $('nowSub').textContent = sub;
+  const bits = [];
+  bits.push(data.t0 ? 'Last data ' + new Date(data.t0).toLocaleTimeString([], {hour12:false}) : 'No data yet. Press Fetch now.');
+  if (running && nextPoll > now){ const s = Math.ceil((nextPoll - now) / 1000); bits.push(`refresh in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`); }
+  bits.push(`${counters.packets} packets sent`);
+  $('meta').textContent = bits.join(' · ');
+}
+setInterval(() => { if (!running) render(); }, 1000);
+
+// ---- start ----
+showProvider(); renderRows(); renderLocations(); updateButtons();
+log('Ready. Choose an API and locations, connect the bridge, then start sending.');
+</script>
+</body>
+</html>
